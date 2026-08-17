@@ -19,14 +19,22 @@ def job_execution_cycle():
     new_jobs_count = 0
 
     for job in jobs:
-        url = job.get("app_link")
-        if not url or is_job_seen(url):
+        url = job.get("app_link", "").strip()
+        org_name = job.get("org_name", "").strip()
+        role_name = job.get("role_name", "").strip()
+        post_date = job.get("app_start", "").strip()
+
+        if not url:
+            continue
+
+        # Correctly pass org_name, role_name, and url
+        if is_job_seen(org_name, role_name, url):
             continue
 
         if send_telegram_alert(job):
-            mark_job_seen(url, job.get("org_name", ""), job.get("role_name", ""))
+            mark_job_seen(org_name, role_name, url, post_date)
             new_jobs_count += 1
-            time.sleep(1.5)  # Rate limiting to respect Telegram API quotas
+            time.sleep(1.5)  # Respect Telegram API rate limits
 
     logger.info(f"Cycle completed. {new_jobs_count} new alerts broadcasted.")
 
