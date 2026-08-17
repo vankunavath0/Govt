@@ -1,0 +1,40 @@
+name: Daily Govt Job Scraper
+
+on:
+  schedule:
+    # 02:30 UTC = 08:00 AM IST
+    - cron: "30 2 * * *"
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+permissions:
+  contents: write # Needed to commit jobs.db back to repo
+
+jobs:
+  scrape-and-notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Scraper Cycle
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TIMEZONE: "Asia/Kolkata"
+        run: python -c "from main import job_execution_cycle; job_execution_cycle()"
+
+      - name: Commit and Push Updated DB
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update seen jobs database [skip ci]"
+          file_pattern: "jobs.db"
