@@ -2,12 +2,12 @@ name: Daily Govt Job Scraper
 
 on:
   schedule:
-    # 02:30 UTC = 08:00 AM IST
-    - cron: "30 2 * * *"
-  workflow_dispatch: # Allows manual trigger from GitHub UI
+    # 02:30 UTC = 08:00 AM IST daily
+    - cron: '30 2 * * *'
+  workflow_dispatch:
 
 permissions:
-  contents: write # Needed to commit jobs.db back to repo
+  contents: write
 
 jobs:
   scrape-and-notify:
@@ -16,12 +16,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
+          python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -34,7 +36,12 @@ jobs:
         run: python -c "from main import job_execution_cycle; job_execution_cycle()"
 
       - name: Commit and Push Updated DB
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore: update seen jobs database [skip ci]"
-          file_pattern: "jobs.db"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull origin main --rebase
+          if [ -f "jobs.db" ]; then
+            git add jobs.db
+            git commit -m "chore: update seen jobs database [skip ci]" || echo "No changes to commit"
+            git push origin main
+          fi

@@ -3,17 +3,19 @@ import time
 import logging
 import requests
 from bs4 import BeautifulSoup
+from fake_useragent import UserAgent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# Education match keywords
 INCLUDED_EDUCATION = [
     r"\bcse\b", r"\bcs\b", r"computer science", r"information technology",
     r"\bit\b", r"any degree", r"any graduate", r"b\.?e\.?", r"b\.?tech",
-    r"engineering", r"software", r"programmer", r"technical officer",
-    r"graduate", r"officer", r"assistant"
+    r"engineering", r"software", r"programmer", r"technical officer"
 ]
 
+# Strict cutoffs higher than 6.64 CGPA (~66.4%)
 EXCLUDED_CUTOFFS = [
     r"70\s*%", r"75\s*%", r"80\s*%", r"7\.0\s*cgpa", r"7\.5\s*cgpa",
     r"first class with distinction", r"minimum 70%"
@@ -22,14 +24,21 @@ EXCLUDED_CUTOFFS = [
 def get_headers() -> dict:
     return {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Connection": "keep-alive"
+        "Referer": "https://www.google.com/",
+        "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "cross-site",
+        "Upgrade-Insecure-Requests": "1"
     }
 
 def fetch_page(url: str) -> BeautifulSoup | None:
     try:
-        response = requests.get(url, headers=get_headers(), timeout=20)
+        response = requests.get(url, headers=get_headers(), timeout=15)
         response.raise_for_status()
         return BeautifulSoup(response.text, "html.parser")
     except requests.RequestException as e:
@@ -38,12 +47,17 @@ def fetch_page(url: str) -> BeautifulSoup | None:
 
 def is_profile_eligible(qualification_text: str, full_text: str = "") -> bool:
     content = f"{qualification_text} {full_text}".lower()
-    has_education = any(re.search(pat, content) for pat in INCLUDED_EDUCATION)
-    if not has_education:
+    
+    # Check educational match
+    has_matching_education = any(re.search(pattern, content) for pattern in INCLUDED_EDUCATION)
+    if not has_matching_education:
         return False
-    has_strict_cutoff = any(re.search(pat, content) for pat in EXCLUDED_CUTOFFS)
-    if has_strict_cutoff:
+
+    # Check for strict >66.4% score barriers
+    has_ineligible_cutoff = any(re.search(pattern, content) for pattern in EXCLUDED_CUTOFFS)
+    if has_ineligible_cutoff:
         return False
+
     return True
 
 def scrape_freejobalert_central() -> list[dict]:
@@ -53,8 +67,10 @@ def scrape_freejobalert_central() -> list[dict]:
     if not soup:
         return jobs
 
-    for table in soup.find_all("table"):
-        for row in table.find_all("tr")[1:]:
+    tables = soup.find_all("table")
+    for table in tables:
+        rows = table.find_all("tr")
+        for row in rows[1:]:
             cols = row.find_all("td")
             if len(cols) < 5:
                 continue
@@ -64,7 +80,8 @@ def scrape_freejobalert_central() -> list[dict]:
             role_name = cols[2].get_text(strip=True)
             qualification = cols[3].get_text(strip=True)
             last_date = cols[4].get_text(strip=True)
-            link_tag = row.find("a", href=True)
+            
+            link_tag = cols[-1].find("a", href=True) if len(cols) >= 6 else row.find("a", href=True)
             app_link = link_tag["href"] if link_tag else url
 
             if is_profile_eligible(qualification, f"{org_name} {role_name}"):
@@ -74,44 +91,40 @@ def scrape_freejobalert_central() -> list[dict]:
                     "branches": qualification or "B.Tech CSE / IT / Any Graduate",
                     "app_start": post_date or "Check Notification",
                     "last_date": last_date or "Refer Notification",
-                    "selection_procedure": "CBT / Written Test / Interview",
+                    "selection_procedure": "CBT / Technical Exam / Interview (Check Notification)",
                     "app_fee": "As per official notification",
                     "app_link": app_link
                 })
     return jobs
 
-def scrape_telangana_jobs() -> list[dict]:
-    url = "https://www.freejobalert.com/telangana-government-jobs/"
+def scrape_indgovtjobs_telangana() -> list[dict]:
+    url = "https://telangana.indgovtjobs.net/jobs/"
     soup = fetch_page(url)
     jobs = []
     if not soup:
         return jobs
 
-    for table in soup.find_all("table"):
-        for row in table.find_all("tr")[1:]:
-            cols = row.find_all("td")
-            if len(cols) < 4:
-                continue
+    for article in soup.find_all(["article", "div"], class_=re.compile(r"post|job|item")):
+        title_tag = article.find(["h2", "h3", "a"])
+        if not title_tag:
+            continue
+            
+        title_text = title_tag.get_text(strip=True)
+        link_tag = article.find("a", href=True)
+        app_link = link_tag["href"] if link_tag else url
+        snippet = article.get_text(separator=" ", strip=True)
 
-            post_date = cols[0].get_text(strip=True)
-            org_name = cols[1].get_text(strip=True)
-            role_name = cols[2].get_text(strip=True) if len(cols) > 2 else ""
-            qualification = cols[3].get_text(strip=True) if len(cols) > 3 else ""
-            last_date = cols[4].get_text(strip=True) if len(cols) > 4 else "Refer Notification"
-            link_tag = row.find("a", href=True)
-            app_link = link_tag["href"] if link_tag else url
-
-            if is_profile_eligible(qualification, f"{org_name} {role_name}"):
-                jobs.append({
-                    "org_name": f"Telangana: {org_name}",
-                    "role_name": role_name or "Technical / State Cadre Post",
-                    "branches": qualification or "B.Tech CSE / Any Graduate",
-                    "app_start": post_date or "Active",
-                    "last_date": last_date,
-                    "selection_procedure": "TSPSC / State Board Written Exam + Verification",
-                    "app_fee": "Refer TS Notification",
-                    "app_link": app_link
-                })
+        if is_profile_eligible(snippet, title_text):
+            jobs.append({
+                "org_name": "Telangana State Recruitment",
+                "role_name": title_text,
+                "branches": "B.Tech CSE / IT / Any Graduate (Telangana Region)",
+                "app_start": "Announced",
+                "last_date": "Check Official Portal",
+                "selection_procedure": "Written Test / Interview",
+                "app_fee": "Refer TSPSC / Official Portal",
+                "app_link": app_link
+            })
     return jobs
 
 def scrape_indgovtjobs_all_india() -> list[dict]:
@@ -121,7 +134,8 @@ def scrape_indgovtjobs_all_india() -> list[dict]:
     if not soup:
         return jobs
 
-    for table in soup.find_all("table"):
+    tables = soup.find_all("table")
+    for table in tables:
         for row in table.find_all("tr")[1:]:
             cols = row.find_all("td")
             if len(cols) < 4:
@@ -131,6 +145,7 @@ def scrape_indgovtjobs_all_india() -> list[dict]:
             role_name = cols[1].get_text(strip=True)
             qualification = cols[2].get_text(strip=True) if len(cols) > 2 else ""
             last_date = cols[3].get_text(strip=True) if len(cols) > 3 else "Refer Notice"
+            
             link_tag = row.find("a", href=True)
             app_link = link_tag["href"] if link_tag else url
 
@@ -151,7 +166,7 @@ def run_all_scrapers() -> list[dict]:
     all_jobs = []
     scrapers = [
         scrape_freejobalert_central,
-        scrape_telangana_jobs,
+        scrape_indgovtjobs_telangana,
         scrape_indgovtjobs_all_india
     ]
 
@@ -160,7 +175,7 @@ def run_all_scrapers() -> list[dict]:
             logger.info(f"Running {scraper.__name__}...")
             results = scraper()
             all_jobs.extend(results)
-            time.sleep(1.5)
+            time.sleep(2)  # Rate limiting between domains
         except Exception as e:
             logger.error(f"Error during {scraper.__name__}: {e}", exc_info=True)
 
