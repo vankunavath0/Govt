@@ -18,34 +18,28 @@ def init_db():
         
         # Check if table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='seen_jobs'")
-        table_exists = cursor.fetchone() is not None
-
-        if table_exists:
-            # Check existing columns
+        if cursor.fetchone():
             cursor.execute("PRAGMA table_info(seen_jobs)")
-            columns = [col[1] for col in cursor.fetchall()]
-            
-            # If the database has the old schema missing job_hash, reset the table
-            if "job_hash" not in columns:
+            cols = [col[1] for col in cursor.fetchall()]
+            # If missing job_hash column, drop the outdated table
+            if "job_hash" not in cols:
                 cursor.execute("DROP TABLE seen_jobs")
-                table_exists = False
-
-        if not table_exists:
-            cursor.execute("""
-                CREATE TABLE seen_jobs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    job_hash TEXT UNIQUE,
-                    job_url TEXT,
-                    org_name TEXT,
-                    role_name TEXT,
-                    discovered_date TEXT,
-                    discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS seen_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_hash TEXT UNIQUE,
+                job_url TEXT,
+                org_name TEXT,
+                role_name TEXT,
+                discovered_date TEXT,
+                discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
 
 def is_job_seen(org_name: str, role_name: str, job_url: str) -> bool:
-    init_db()  # Ensure table is ready
+    init_db()
     job_hash = generate_job_hash(org_name, role_name, job_url)
     with get_connection() as conn:
         cursor = conn.cursor()
