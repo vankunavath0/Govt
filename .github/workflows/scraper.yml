@@ -40,12 +40,13 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          # Check if jobs.db was created or modified
-          if [ -n "$(git status --porcelain jobs.db)" ]; then
-            git add jobs.db
-            git commit -m "chore: update seen jobs database [skip ci]"
+          if [ -f "jobs.db" ]; then
+            git add -f jobs.db
+            git commit -m "chore: update seen jobs database [skip ci]" || echo "No changes to commit"
             git pull origin main --rebase
-            git push origin main
+            git push origin HEAD:main
           else
-            echo "No database changes to commit."
+            echo "No database file generated."
           fi
+
+          
